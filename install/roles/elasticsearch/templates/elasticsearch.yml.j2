@@ -30,11 +30,11 @@
 #
 # Path to directory where to store the data (separate multiple locations by comma):
 #
-#path.data: /path/to/data
+path.data: /var/lib/elasticsearch
 #
 # Path to log files:
 #
-#path.logs: /path/to/logs
+path.logs: /var/log/elasticsearch
 #
 # ----------------------------------- Memory -----------------------------------
 #
@@ -53,10 +53,10 @@
 # Set the bind address to a specific IP (IPv4 or IPv6):
 #
 {% if es_listen_external %}
-network.host: 0.0.0.0 
+network.host: 0.0.0.0
 {% endif %}
 {% if not es_listen_external %}
-#network.host: {{ ansible_default_ipv4.address }}
+network.host: {{ ansible_default_ipv4.address }}
 {% endif %}
 #
 # Set a custom port for HTTP:

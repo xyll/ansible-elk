@@ -3,27 +3,76 @@
 # Install/run elasticsearch
 #
 
-- name: Install libsemanage-python and dependencies
-  yum: name={{ item }} state=present
+- name: Install add-apt-repostory
+  become: yes
+  apt: name=software-properties-common state=latest
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'trusty'
+
+- name: Add Oracle Java Repository
+  become: yes
+  apt_repository: repo='ppa:webupd8team/java'
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'trusty'
+
+- name: Accept Java 8 License
+  become: yes
+  debconf: name='oracle-java8-installer' question='shared/accepted-oracle-license-v1-1' value='true' vtype='select'
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'trusty'
+
+- name: Install Oracle Java 8
+  become: yes
+  apt: name={{item}} state=latest
+  with_items:
+    - oracle-java8-installer
+    - ca-certificates
+    - oracle-java8-set-default
+  when: ansible_distribution == 'Ubuntu' and ansible_distribution_release == 'trusty'
+
+- name: Add ElasticSearch yum repo.
+  yum_repository:
+    name: elasticsearch
+    description: ElasticSearch YUM repo
+    baseurl: "https://artifacts.elastic.co/packages/6.x/yum"
+    gpgkey: "https://artifacts.elastic.co/GPG-KEY-elasticsearch"
+  become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+
+- name: Install apt-transport-https
+  package: name={{ item }} state=present
+  become: true
+  with_items:
+    - apt-transport-https
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Add ElasticSearch apt key.
+  apt_key:
+    id: D88E42B4
+    keyserver: pgp.mit.edu
+    state: present
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Add ElasticSearch apt repo.
+  apt_repository:
+    repo: "deb https://artifacts.elastic.co/packages/6.x/apt stable main"
+    state: present
+    filename: elasticsearch
+    update_cache: yes
+  when: ansible_distribution == 'Ubuntu'
+
+- name: Install elasticsearch and openjdk on RHEL or Centos
+  package: name={{ item }} state=present
   become: true
   with_items:
     - libsemanage-python
+    - java-openjdk-headless
+    - elasticsearch
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
-- name: Copy elasticsearch yum repo file
-  copy:
-    src=elasticsearch.repo
-    dest=/etc/yum.repos.d/elasticsearch.repo
-    owner=root
-    group=root
-    mode=0644
-  become: true
-
-- name: Install elasticsearch and openjdk
-  yum: name={{ item }} state=present
+- name: Install elasticsearch and openjdk on Ubuntu
+  package: name={{ item }} state=present
   become: true
   with_items:
     - elasticsearch
-    - java-openjdk-headless
+  when: ansible_distribution == 'Ubuntu'
 
 - name: Copy templated elasticsearch.yml
   template:
@@ -35,59 +84,28 @@
   become: true
   ignore_errors: true
 
-- name: Check if system memory is greater than 64G
-  debug: msg="System memory is {{ansible_memory_mb.real.total | int}} so setting heapsize to 32G upper limit"
-  when: ansible_memory_mb.real.total|int >= 65536
+- name: Copy templated jvm.options
+  template:
+    src=jvm.options.j2
+    dest=/etc/elasticsearch/jvm.options
+    owner=root
+    group=elasticsearch
+    mode=0660
   become: true
-
-- name: Apply heapsize start tuning for systems with greater than 64G memory
-  lineinfile:
-    path=/etc/elasticsearch/jvm.options
-    regexp='^-Xms2g'
-    line='-Xms31g'
-  when: ansible_memory_mb.real.total|int >= 65536
-  become: true
-
-- name: Apply heapsize end tuning for systems with greater than 64G memory
-  lineinfile:
-    path=/etc/elasticsearch/jvm.options
-    regexp='^-Xmx2g'
-    line='-Xmx31g'
-  when: ansible_memory_mb.real.total|int >= 65536
-  register: elasticsearch_updated
-  become: true
-
-- name: Print extended documentation for heapsize tuning
-  debug: msg="Refer to https://www.elastic.co/guide/en/elasticsearch/guide/current/_limiting_memory_usage.html"
-  when: ansible_memory_mb.real.total|int >= 65536
-  become: true
-
-- name: Update elasticsearch startup with start heap size
-  become: true
-  lineinfile:
-    path=/etc/elasticsearch/jvm.options
-    regexp='^-Xms2g'
-    line='-Xms{{ (ansible_memory_mb.real.total / 2) | int }}m'
-  when: ansible_memory_mb.real.total|int < 65536
-
-- name: Update elasticsearch startup with end heap size
-  become: true
-  lineinfile:
-    path=/etc/elasticsearch/jvm.options
-    regexp='^-Xmx2g'
-    line='-Xmx{{ (ansible_memory_mb.real.total / 2) | int }}m'
-  when: ansible_memory_mb.real.total|int < 65536
-  register: elasticsearch_updated
+  ignore_errors: true
+  register: elasticsearch_config_updated
 
 - name: Apply workaround for java listening port
   raw: setcap 'cap_net_bind_service=+ep' /usr/lib/jvm/java-1.8.*openjdk-*/jre/bin/java
   become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
 # https://www.centos.org/forums/viewtopic.php?t=16398
 - name: Obtain exact version of JRE for libjli.so workaround
   shell: "ls /usr/lib/jvm/ | grep java | grep openjdk-1"
   register: libjli_location
   become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
 - name: Apply EL symlink workaround for libjli.so
   file:
@@ -95,11 +113,20 @@
     dest='/lib64/libjli.so'
     state=link
   become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
-- name: Start or restart elasticsearch service
+- name: Start or restart elasticsearch service with systermctl
   command: systemctl restart elasticsearch.service
   ignore_errors: true
-  when: elasticsearch_updated != 0
+  when: elasticsearch_config_updated.changed != 0 and ansible_distribution_release != 'trusty'
+  become: true
+
+- name: Start or restart elasticsearch service with service
+  service:
+    name: elasticsearch
+    state: restarted
+  ignore_errors: true
+  when: elasticsearch_config_updated.changed != 0 and ansible_distribution_release == 'trusty'
   become: true
 
 - name: Setup elasticsearch service to autostart
