@@ -1,25 +1,36 @@
 ---
-#
-# Install/run nginx
-#
+- name: Add EPEL repository
+  yum_repository:
+    name: epel
+    description: EPEL YUM repo
+    baseurl: https://download.fedoraproject.org/pub/epel/$releasever/$basearch/
+    gpgcheck: no
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
-- name: Check/Install EPEL Repo for nginx
-  yum: name={{epel_repo}}
-      state=present
-  become: true
-
-- name: Install nginx, httpd-tools, httplib2
-  yum: name={{ item }} state=present
+- name: Install nginx, httpd-tools, httplib2 on CentOS or RHEL
+  package: name={{ item }} state=present
   become: true
   with_items:
+    - htop
     - nginx
     - httpd-tools
     - python-httplib2
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
 # SELinux boolean for nginx
 - name: Apply SELinux boolean httpd_can_network_connect
   seboolean: name=httpd_can_network_connect state=yes persistent=yes
   become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+
+- name: Install nginx-full apache2-utils on Ubuntu
+  package: name={{ item }} state=present
+  become: true
+  with_items:
+    - htop
+    - nginx-full
+    - apache2-utils
+  when: ansible_distribution == 'Ubuntu'
 
 # create /etc/nginx/conf.d/ directory
 - name: Create nginx directory structure
@@ -37,7 +48,7 @@
     group=root
     mode=0644
   become: true
-  register: nginx_needs_restart
+  register: nginx_config_updated
 
 # deploy basic nginx.conf 8080 vhost
 - name: Setup nginx TCP/8080 vhost for SSL certificate
@@ -49,20 +60,20 @@
     mode=0644
   become: true
 
-# start nginx service
-- name: Start nginx service
-  command: systemctl restart nginx.service
-  ignore_errors: true
-  when: nginx_needs_restart != 0
-  become: true
-
-- name: Set nginx to start on boot
-  command: systemctl enable nginx.service
+- name: Start or restart nginx service with systermctl
+  systemd:
+    name: nginx
+    state: restarted
+    enabled: true
   ignore_errors: true
   become: true
+  when: nginx_config_updated.changed != 0 and ( ansible_distribution_release != 'trusty' and ansible_distribution_major_version != "6" )
 
-# we only want to enable EPEL for some packages
-- name: Remove EPEL Repo
-  yum: name={{epel_repo}}
-      state=absent
+- name: Start or restart nginx service with service
+  service:
+    name: nginx
+    state: restarted
+    enabled: true
+  ignore_errors: true
   become: true
+  when: nginx_config_updated.changed != 0 and ( ansible_distribution_release == 'trusty' or ansible_distribution_major_version == "6" )

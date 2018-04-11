@@ -2,10 +2,15 @@
 #   * Official English Documentation: http://nginx.org/en/docs/
 #   * Official Russian Documentation: http://nginx.org/ru/docs/
 
+{% if ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux' %}
 user nginx;
+{% endif %}
+{% if ansible_distribution == 'Ubuntu' %}
+user www-data;
+{% endif %}
 worker_processes auto;
 error_log /var/log/nginx/error.log;
-pid /run/nginx.pid;
+pid /var/run/nginx.pid;
 
 events {
     worker_connections 1024;

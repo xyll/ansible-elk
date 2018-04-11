@@ -68,7 +68,16 @@
     - elasticsearch
   when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
 
-- name: Install elasticsearch and openjdk on Ubuntu
+- name: Add nproc limits on CentOS or RHEL
+  lineinfile:
+    path: /etc/security/limits.d/91-c1-es-nproc.conf
+    create: yes
+    state: present
+    line: 'elasticsearch       soft    nproc     8192'
+  become: true
+  when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+
+- name: Install elasticsearch on Ubuntu
   package: name={{ item }} state=present
   become: true
   with_items:
